@@ -1,0 +1,140 @@
+Getting started with assignment 5
+I’ve been a TA for this course a couple times before, and there’s always a ton of questions here on Piazza and in help hours about how to get started with assignment 5. This is a challenging assignment, and we give you a lot of freedom regarding your implementation strategy, which makes it hard to know where to begin.
+
+The very first thing you should do is design your allocator.
+It is way harder to, for example, retrofit an explicit free list implementation on top of something you’ve already written than it is to design it with that in mind from the get-go. And in general if you have a clear goal of what you want to work, it’s not hard to come up with a specific plan for implementation.
+
+You should read and re-read the lecture slides before writing any code, because they go over several allocator strategies with different pros and cons. If you don’t have a good idea of what the allocator is doing and why it works, then you should go over it again. And feel free to post questions here if you’re confused!
+
+In terms of what specific optimizations you should be considering, here is a paragraph from the assignment page that I want to point out:
+
+An overall P of 75 or higher will give 100 points, and an overall P higher than the one achieved by the baseline allocator will give partial credit. Substantial partial credit will be given for incorrect implementations that include legitimate attempts at strategies needed for a performant solution, such as using an explicit free list, coalescing free blocks, unmapping unused pages, and avoiding too many calls to mmap.
+
+Here’s a quick summary of what these mean. You should go to the lecture slides for more details.
+
+Using an explicit free list: this is some sort of data structure that you can search for a free block of the appropriate size. It should only contain free blocks, so that when you’re scanning through your data structure the only condition you’re checking is whether each block is big enough for the allocation request.
+Coalescing free blocks: if you allocate two blocks that are adjacent in memory, and then free both blocks, you can merge the two free blocks into a single larger free block. This is harder to implement than you might expect, because you have to make sure that your explicit free list doesn’t have any dangling pointers to the middle of the larger block of memory, and because you have to update both the header and the footer of the new larger block of memory.
+Unmapping unused pages: if the user allocates a huge chunk of memory and then unallocates the same chunk of memory and continues to make small allocations for the rest of the program’s lifetime, then your utilization score will be poor because only a little bit of memory is in use compared to the amount of pages that you have mapped. In order to maintain a good utilization score, then you should unmap pages that don’t stay in use.
+Avoiding too many calls to mem_map (and also mem_unmap): these are both slow, expensive system calls. If you call these functions too frequently, your performance score will be poor.
+I’ll discuss some different implementation tradeoffs in another section.
+
+Design a debugging strategy
+Something you should do before writing any code is to design a debugging strategy! Specifically, a heap checker like what we wrote in lab 10 can catch a lot bugs and help you identify the cause. On top of that, some sort of structured debugging output (like what Professor Regehr has been stressing in class!) is going to help you considerably if you get stuck with a troublesome issue.
+
+Once you have designed your allocator, (again, before you write any code), you should make a list of specific invariants that should always be true about your data structures. In lab 10, we made a list of invariants about a doubly-linked list, and then we wrote a list checker that checked that these invariants were always true. This made it really easy to identify the bugs in the implementation! Here is what we checked:
+
+head == NULL if and only if tail == NULL.
+If we have a linked list node A, then PREV(A) == NULL if and only if A == head, and NEXT(A) == NULL if and only if A == tail.
+NEXT(A) == B if and only if PREV(B) == A.
+This is what our checker function looked like:
+
+// hd == NULL  <==>  tl == NULL
+if (hd == NULL && tl != NULL) { printf("    [PROBLEM]  hd == NULL && tl != NULL\n"); }
+if (hd != NULL && tl == NULL) { printf("    [PROBLEM]  hd != NULL && tl == NULL\n"); }
+
+// PREV(hd) == NULL && NEXT(tl) == NULL
+if (hd != NULL && PREV(hd) != NULL) { printf("    [PROBLEM]  PREV(hd) != NULL\n"); }
+if (tl != NULL && NEXT(tl) != NULL) { printf("    [PROBLEM]  NEXT(tl) != NULL\n"); }
+
+// NEXT(A) == B  <==>  PREV(B) == A
+void* prev = NULL;
+for (void* l = hd; l != NULL; l = NEXT(l)) {
+    if (PREV(l) != prev) {
+        char* data = (prev == NULL) ? "NULL" : DATA(prev);
+        printf("    [PROBLEM]  PREV(\"%s\") != \"%s\"\n", (char*)DATA(l), data);
+    }
+    prev = l;
+}
+run code snippetVisit Manage Class to disable runnable code snippets×
+If you use a doubly-linked explicit free list, you should check these same conditions, along with all other invariants that you come up with. Here’s a couple more from the assignment specifications:
+
+You must never give the caller of mm_malloc a payload that overlaps with another payload.
+All payloads must fit entirely in mapped memory (i.e., pages that you got from a call to mem_map).
+You must never return an already-allocated payload to the caller of mm_malloc.
+You must never call mem_unmap on a page that still contains allocated blocks, or on an address that is not the start of a page.
+Your free list must never contain addresses of allocated blocks or blocks that have been unmapped due to a call to mem_unmap.
+Can you come up with more invariants? Maybe some that are specific to your allocator design? Check all of them in some sort of heap checker function, which you should call before and after every operation that changes the state of your program.
+
+Implementation tradeoffs
+This assignment requires that you balance 2 things: memory utilization and performance. Some of the more aggressive utilization techniques are expensive in terms of performance, and some of the more aggressive performance optimizations aren’t as efficient with memory utilization. On top of this, you’ll want to write a solution that is easy to both implement and debug.
+
+One of the biggest things you’ll need to design is how to track information about the blocks and pages, including things like size and whether they’re allocated or free. This will be necessary for searching for free blocks of the appropriate size, as well as for coalescing free blocks and possibly unmapping unused pages. The most straightforward way to do this is with header and footer bytes before and after the payload within a block. How do you want to represent this information? I’ve seen students use 16-byte headers and footers, where the first 8 bytes are the size of the block and then the rest of the space is used to store some booleans about whether this block is free or allocated, among other things. It is twice as memory-efficient to use 8-byte headers and footers, and instructions on how to do this are described in the lecture slides, but it has a slight performance hit as well as some code complexity implications. Similarly, you can track the size of a page with a header and a footer (or a “prologue” and a “terminator”, if you want to use different words to differentiate from block headers/footers).
+
+The other big thing you’ll want to make a decision on is the way you track your free list. An explicit free list adds a lot more complexity mm_free, especially if you’re coalescing adjacent free blocks, but mm_malloc is way faster if you aren’t searching through every block in every page, allocated or free, for a block that is both free and the required size.
+
+What kind of data structure do you want to use for your free list?
+
+Implicit list: you search through every block in every page until you either find one that’s free and large enough for the allocation request, or you find that there aren’t any and you have to map a new page. It’s really easy to implement this, but super slow, especially if you have a lot of blocks across multiple pages. You also need to come up with a way to go from one page to the next in order to search all pages. This simply isn’t going to cut it if you’re looking for an A on the assignment, because of how slow it is.
+Doubly-linked list: this is also fairly simple in terms of code complexity and overhead in mm_free. It is super space-efficient, because you can pack the next and previous pointers into the payloads of free blocks without needing to increase the minimum payload size past 16. If you implement it well, you can get full points on the assignment. But it can be quite slow compared to other solutions if you have a long list to search through. (E.g., if you have 1000 small blocks that you need to iterate through in order to find one that’s big enough for a large request.)
+Binary search tree: this is a really cool one. You shouldn’t need to do this for full points, but it’s super efficient, especially if you use a self-balancing algorithm (like a red-black tree). You can find the best-fit free block for any allocation request by traversing the tree. It adds a lot to the code complexity compared to a simple doubly-linked list, but if you want to have fun with writing a super efficient solution then this is a great way to go—BSTs aren’t super complex compared to a lot of data structures you could choose, and in terms of runtime and memory usage, they’re super efficient.
+Something else? You can look at real production-grade allocators for inspiration. Usually they use a more sophisticated algorithm that is super good at balancing runtime performance and memory utilization while also working in a multithreaded context. Here’s a couple of paragraphs from the glibc wiki, which is where malloc comes from on the CADE machines:
+The GNU C library’s (glibc’s) malloc library contains a handful of functions that manage allocated memory in the application’s address space. The glibc malloc is derived from ptmalloc (pthreads malloc), which is derived from dlmalloc (Doug Lea malloc). This malloc is a “heap” style malloc, which means that chunks of various sizes exist within a larger region of memory (a “heap”) as opposed to, for example, an implementation that uses bitmaps and arrays, or regions of same-sized blocks, etc. In ancient times, there was one heap per application, but glibc’s malloc allows for multiple heaps, each of which grows within its address space.
+
+Glibc’s malloc is chunk-oriented. It divides a large region of memory (a “heap”) into chunks of various sizes. Each chunk includes meta-data about how big it is (via a size field in the chunk header), and thus where the adjacent chunks are. When a chunk is in use by the application, the only data that’s “remembered” is the size of the chunk. When the chunk is free’d, the memory that used to be application data is re-purposed for additional arena-related information, such as pointers within linked lists, such that suitable chunks can quickly be found and re-used when needed. Also, the last word in a free’d chunk contains a copy of the chunk size (with the three LSBs set to zeros, vs the three LSBs of the size at the front of the chunk which are used for flags).
+
+If you ask me, though, a doubly-linked list (like what we’ve spent a lot of time in class discussing) is an excellent balance of performance, utilization, and code complexity. When I took this class, I implemented a red-black BST, and ended up with a really good solution, but I spent way more time on it than I wanted to. If all you want is to get an A, a doubly-linked list will be sufficient.
+
+What does all of this look like in practice?
+First, let’s start with some linked-list operations. We want to be able to add and remove entries. We also want to be able to traverse the linked list by looking at the next or previous entry from the current one, and to be able to find a block that’s at least a certain size.
+
+/// Represents a single entry in the linked list
+///
+/// You don't have to define a new type, but I did for clarity here
+typedef struct ll_entry_t {
+    /// A pointer to the entry before this one
+    struct ll_entry_t* prev;
+    /// A pointer to the entry after this one
+    struct ll_entry_t* next;
+} ll_entry_t;
+
+/// The head of the doubly-linked explicit free list
+ll_entry_t* ll_head;
+
+/// Add the given linked-list entry to the linked list
+///
+/// An easy way to do this is to simply make it the new list head
+void ll_add(ll_entry_t* ll_entry) { /* ... */ }
+
+/// Remove the given entry from the linked list
+///
+/// If we have (P -> [ll_entry] -> N), we want to change it to (P -> N).
+/// Also, update the `ll_head` variable if this is the list head
+void ll_remove(ll_entry_t* ll_entry) { /* ... */ }
+
+/// Search the linked list for an entry at least as big as `min_size`
+///
+/// If an entry is found, it is removed from the linked list; otherwise, return `NULL`
+void* ll_find(size_t min_size) { /* ... */ }
+
+I know I’m skipping a lot of code here, but these are basic linked list methods that I’m confident you can implement. I just want to demonstrate a consistent API.
+
+How do we use this explicit linked list? Well, basically, we want to add a free block to the list when it gets freed, and find and extract an entry from the free list when we want to return an allocated block to the user, as well as map new pages as needed. This is all we need to do for basic functionality. A starter point would look something like this:
+
+/// Allocate a free block and return it to the user
+void* mm_malloc(size_t size) {
+    size_t min_size = ALIGN(size);
+    void* payload_ptr = ll_find(min_size); // note: if a big enough entry is found, it is removed from the LL
+    if (payload_ptr == NULL) {
+        void* new_page = map_new_page(PAGE_ALIGN(min_size + PAGE_OVERHEAD));
+        payload_ptr = initialize_page(new_page);
+    }
+    // TODO: maybe split this block if it's bigger than we need?
+    return payload_ptr;
+}
+
+/// Free an allocated block
+void mm_free(void* ptr) {
+    // TODO: maybe block coalescing?
+    // TODO: maybe unmap free pages?
+    ll_add(ptr);
+}
+
+Note that I haven’t tested this code, and that it is horribly inefficient without implementing some of the other techniques that build off this.
+
+
+
+I would just add that although (as you say) it’s important to design the allocator up-front, it should be implemented in many small steps. for example, you can start out allocating from a single page that you map in mm_init. once that is fully working, it makes sense to start allocating additional pages.
+
+also, if you’d like to see what size allocations are contained in the traces we’ve provided, this command works:
+
+ls *.rep  | xargs grep '^a ' | cut -d ' ' -f 3 | sort -n | uniq -c | less
