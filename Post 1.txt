@@ -1,4 +1,4 @@
-Getting started with assignment 5
+Getting started with assignment 5 
 I’ve been a TA for this course a couple times before, and there’s always a ton of questions here on Piazza and in help hours about how to get started with assignment 5. This is a challenging assignment, and we give you a lot of freedom regarding your implementation strategy, which makes it hard to know where to begin.
 
 The very first thing you should do is design your allocator.
