@@ -1,38 +1,34 @@
-// Making our own custom hooks
-
+// Custom hooks for auth and account data
 import { useContext } from "react";
 import { AuthContext } from "./contexts";
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "react-router";
 
-const useAuth = () => useContext(AuthContext);
+// This is a hook to access auth context
+export const useAuth = () => useContext(AuthContext);
 
-const useAccount = () => {
-    const navigate = useNavigate();
-    const {loggedIn, headers, logout} = useAuth();
-    const query = useQuery({
-        enabled: loggedIn,
-        queryKey: ["account"],
-        queryFn: async () => {
-            const response = await fetch("http://localhost:8000/accounts/me", {headers});
-            if(response.ok){
-                return await response.json();
-            }
-            else {
-                throw new Error("invalid token");
-            }
+// This is a hook to access current account data
+export const useAccount = () => {
+  const { loggedIn, headers, logout } = useAuth();
+  
+  const query = useQuery({
+    queryKey: ["account"],
+    queryFn: async () => {
+      const response = await fetch("http://localhost:8000/accounts/me", { headers });
+      if (response.ok) {
+        return await response.json();
+      } else {
+        const data = await response.json();
+        // If token is expired, log out
+        if (data.error === "expired_access_token") {
+          logout();
         }
-    });
-    if(query.isSuccess){
-        return query.data;
-    }
-    else if(query.isError){
-        logout();
-        navigate("/login");
-    }
-    else{
-        return {id: -1, username: "loading"};
-    }
-}
+        throw new Error(data.message || "Failed to fetch account");
+      }
+    },
+    enabled: loggedIn, // Only run query if logged in and don't retry on error
+    retry: false, 
+  });
 
-export {useAuth, useAccount}
+  // If successful, return data. Else, return default object
+  return query.data || { id: -1, username: "", email: "" };
+};
